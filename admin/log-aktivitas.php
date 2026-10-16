@@ -1,6 +1,6 @@
 <?php
-// petugas/log-aktivitas.php - Log aktivitas sistem (khusus Admin)
-// Fitur: statistik, filter (kata kunci, pengguna, jenis, tanggal), paginasi, unduh CSV, bersihkan log lama
+// admin/log-aktivitas.php - Log aktivitas sistem (khusus Admin)
+// Fitur: statistik, filter (kata kunci, pengguna, jenis, tanggal), paginasi, unduh CSV (hanya baca, log tidak bisa dihapus)
 require __DIR__ . '/../koneksi.php';
 auth('admin');
 
@@ -21,24 +21,10 @@ function ikon_log($aksi) {
         ['Admin mencatat', 'fa-arrow-rotate-left', 'ok'], ['Menghapus', 'fa-trash', 'bad'],
         ['Admin menghapus', 'fa-trash', 'bad'], ['Menyimpan', 'fa-floppy-disk', 'info'],
         ['Admin menambah', 'fa-floppy-disk', 'info'], ['Admin mengubah', 'fa-pen', 'info'],
-        ['Mengunduh', 'fa-file-arrow-down', 'info'], ['Membersihkan', 'fa-broom', 'bad'],
+        ['Mengunduh', 'fa-file-arrow-down', 'info'],
     ];
     foreach ($map as [$k, $i, $c]) if (stripos($aksi, $k) === 0) return [$i, $c];
     return ['fa-circle-info', 'info'];
-}
-
-/* ---------- bersihkan log lama (POST) ---------- */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a'] ?? '') === 'bersih') {
-    if (hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
-        $hari = max(30, (int)($_POST['hari'] ?? 90));
-        q("DELETE FROM log_aktivitas WHERE waktu < NOW() - INTERVAL ? DAY", 'i', $hari);
-        $n = $db->affected_rows;
-        logact("Membersihkan log aktivitas lebih dari $hari hari ($n baris)");
-        $_SESSION['flash_log'] = ["$n log lama dihapus.", 'ok'];
-    } else {
-        $_SESSION['flash_log'] = ['Sesi tidak valid, muat ulang halaman.', 'bad'];
-    }
-    go();
 }
 
 /* ---------- filter ---------- */
@@ -106,7 +92,6 @@ $rows = q("SELECT l.*, u.nama_lengkap, u.level FROM log_aktivitas l
            WHERE $where ORDER BY l.id_log DESC LIMIT $per OFFSET $off", $t, ...$p)->fetch_all(MYSQLI_ASSOC);
 $users = q("SELECT id_user, nama_lengkap FROM users ORDER BY nama_lengkap LIMIT 300")->fetch_all(MYSQLI_ASSOC);
 
-$flash = $_SESSION['flash_log'] ?? null; unset($_SESSION['flash_log']);
 $qs = function ($extra = []) { return '?' . http_build_query(array_filter(array_merge($_GET, $extra), fn($v) => $v !== '' && $v !== null)); };
 ?><!DOCTYPE html>
 <html lang="id">
@@ -188,7 +173,7 @@ tr:hover td{background:#FAFDFC}
 </style>
 </head>
 <body>
-<?php require __DIR__ . '/header.php'; ?>
+<?php require __DIR__ . '/../petugas/header.php'; ?>
 <main class="main">
  <div class="head">
   <div>
@@ -198,8 +183,6 @@ tr:hover td{background:#FAFDFC}
   </div>
   <a class="btn" href="<?= e($qs(['unduh' => 1, 'hal' => null])) ?>"><i class="fa-solid fa-file-arrow-down"></i> Unduh CSV</a>
  </div>
-
- <?php if ($flash): ?><div class="flash <?= e($flash[1]) ?>" role="status"><?= e($flash[0]) ?></div><?php endif; ?>
 
  <div class="stats">
   <div class="stat"><i class="fa-solid fa-list-ul"></i><div><span>Total aktivitas</span><b><?= number_format((int)$s['total'], 0, ',', '.') ?></b></div></div>
@@ -261,13 +244,6 @@ tr:hover td{background:#FAFDFC}
   </div>
  </div>
 
- <form class="card bersih" method="post" onsubmit="return confirm('Hapus log lama secara permanen?')">
-  <input type="hidden" name="a" value="bersih">
-  <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token'] ?? '') ?>">
-  <i class="fa-solid fa-broom"></i> Bersihkan log yang lebih lama dari
-  <select name="hari"><option value="30">30 hari</option><option value="90" selected>90 hari</option><option value="180">180 hari</option><option value="365">1 tahun</option></select>
-  <button class="btn red"><i class="fa-solid fa-trash"></i> Bersihkan</button>
- </form>
 </main>
 </body>
 </html>

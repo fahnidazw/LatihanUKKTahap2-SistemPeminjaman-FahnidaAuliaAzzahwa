@@ -1,37 +1,52 @@
 <?php
 // petugas/pengembalian.php - Manajemen Pengembalian Sarpras & Pencatatan Denda
+// Hak akses: hanya ADMIN dan PETUGAS. Peminjam tidak boleh membuka halaman ini.
 require __DIR__ . '/../koneksi.php';
 if (empty($_SESSION['u'])) { go('../index.php'); exit; }
+
+$level_login = strtolower($_SESSION['u']['level'] ?? $_SESSION['u']['role'] ?? '');
+if (!in_array($level_login, ['admin', 'petugas'], true)) {
+    go('index.php'); // peminjam dialihkan ke dashboard
+    exit;
+}
 
 // Proses Pengembalian Barang & Denda
 if (isset($_GET['aksi'], $_GET['id']) &&$_GET['aksi'] === 'proses') {
     $id_peminjaman = (int)$_GET['id'];
-    $id_petugas    = (int)($_SESSION['u']['id_user'] ?? $_SESSION['u']['id'] ?? 0);$denda_input   = (int)($_GET['denda'] ?? 0);$tgl_sekarang  = date('Y-m-d');
+    $id_petugas    = (int)($_SESSION['u']['id_user'] ?? $_SESSION['u']['id'] ?? 0);$denda_input   = max(0, (int)($_GET['denda'] ?? 0));$tgl_sekarang  = date('Y-m-d');
 
-    // 1. Update status peminjaman langsung ke Selesai
-    q("UPDATE peminjaman SET status = 'Selesai', id_petugas = $id_petugas WHERE id_peminjaman =$id_peminjaman");
+    // Hanya proses jika masih berstatus Disetujui (mencegah stok bertambah dua kali saat halaman di-refresh)
+    $cek = q("SELECT status FROM peminjaman WHERE id_peminjaman = ?", 'i', $id_peminjaman)->fetch_assoc();
+    if ($cek &&$cek['status'] === 'Disetujui') {
 
-    // 2. Masukkan atau perbarui data ke tabel pengembalian (Mencegah error duplikat id_peminjaman)
-    q("INSERT INTO pengembalian (id_peminjaman, tanggal_dikembalikan, kondisi_pulang, denda) 
-       VALUES ($id_peminjaman, '$tgl_sekarang', 'Baik',$denda_input)
-       ON DUPLICATE KEY UPDATE tanggal_dikembalikan = '$tgl_sekarang', denda =$denda_input, kondisi_pulang = 'Baik'");
+        // 1. Update status peminjaman langsung ke Selesai
+        q("UPDATE peminjaman SET status = 'Selesai', id_petugas = ? WHERE id_peminjaman = ?",
+          'ii', $id_petugas,$id_peminjaman);
 
-    // 3. Ambil data detail barang untuk mengembalikan stok inventaris
-    $q_det = q("SELECT * FROM detail_peminjaman WHERE id_peminjaman = $id_peminjaman");
-    if ($q_det &&$q_det->num_rows > 0) {
-        while ($dt =$q_det->fetch_assoc()) {
-            $id_brg = (int)$dt['id_barang'];
-            $jml    = (int)$dt['jumlah_pinjam'];
-            if ($id_brg > 0 &&$jml > 0) {
-                q("UPDATE inventaris SET stok = stok + $jml WHERE id_barang =$id_brg");
+        // 2. Masukkan atau perbarui data ke tabel pengembalian (mencegah error duplikat id_peminjaman)
+        q("INSERT INTO pengembalian (id_peminjaman, tanggal_dikembalikan, kondisi_pulang, denda)
+           VALUES (?, ?, 'Baik', ?)
+           ON DUPLICATE KEY UPDATE tanggal_dikembalikan = VALUES(tanggal_dikembalikan), denda = VALUES(denda), kondisi_pulang = 'Baik'",
+          'isi', $id_peminjaman, $tgl_sekarang,$denda_input);
+
+        // 3. Ambil data detail barang untuk mengembalikan stok inventaris
+        $q_det = q("SELECT id_barang, jumlah_pinjam FROM detail_peminjaman WHERE id_peminjaman = ?", 'i', $id_peminjaman);
+        if ($q_det &&$q_det->num_rows > 0) {
+            while ($dt =$q_det->fetch_assoc()) {
+                $id_brg = (int)$dt['id_barang'];
+                $jml    = (int)$dt['jumlah_pinjam'];
+                if ($id_brg > 0 &&$jml > 0) {
+                    q("UPDATE inventaris SET stok = stok + ? WHERE id_barang = ?", 'ii', $jml,$id_brg);
+                }
             }
         }
-    }
 
-    // 4. Catat log aktivitas
-    try {
-        q("INSERT INTO log_aktivitas (id_user, aksi) VALUES ($id_petugas, 'Memproses pengembalian peminjaman ID #PMJ-" . sprintf('%04d', $id_peminjaman) . "')");
-    } catch (Throwable $e) {}
+        // 4. Catat log aktivitas
+        try {
+            q("INSERT INTO log_aktivitas (id_user, aksi) VALUES (?, ?)",
+              'is', $id_petugas, "Memproses pengembalian peminjaman ID #PMJ-" . sprintf('%04d', $id_peminjaman));
+        } catch (Throwable $e) {}
+    }
 
     // Alihkan kembali ke halaman pengembalian
     go('pengembalian.php');
@@ -86,13 +101,13 @@ th, td{padding:12px 10px;text-align:left;border-bottom:1px solid var(--line);ver
 th{font-weight:700;color:var(--teal);text-transform:uppercase;font-size:10.5px;letter-spacing:.06em;background:rgba(15,95,88,.05)}
 
 /* Lebar kolom proporsional & rapi */
-th:nth-child(1), td:nth-child(1){width:10%} /* ID */
-th:nth-child(2), td:nth-child(2){width:18%} /* Peminjam */
-th:nth-child(3), td:nth-child(3){width:16%} /* Kelas Peminjam */
+th:nth-child(1), td:nth-child(1){width:9%}  /* ID */
+th:nth-child(2), td:nth-child(2){width:17%} /* Peminjam */
+th:nth-child(3), td:nth-child(3){width:15%} /* Kelas Peminjam */
 th:nth-child(4), td:nth-child(4){width:8%}  /* Jml */
 th:nth-child(5), td:nth-child(5){width:14%} /* Tgl Rencana Selesai */
 th:nth-child(6), td:nth-child(6){width:11%} /* Status */
-th:nth-child(7), td:nth-child(7){width:18%} /* Aksi (Ikon Sejajar) */
+th:nth-child(7), td:nth-child(7){width:26%} /* Aksi (Ikon Sejajar) */
 
 .badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:9.5px;font-weight:700;text-transform:uppercase}
 .badge.disetujui{background:rgba(25,135,84,.2);color:#198754}
@@ -104,6 +119,7 @@ th:nth-child(7), td:nth-child(7){width:18%} /* Aksi (Ikon Sejajar) */
 .btn-action:hover{transform:translateY(-1px)}
 .btn-detail{background:var(--cream);color:var(--teal);border:1px solid var(--line)}
 .btn-kembali{background:var(--grad-hidup);color:#fff}
+.btn-cetak{background:#2b8a3e;color:#fff}
 
 /* MODAL POP-UP DENDA */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(10,42,39,0.6);backdrop-filter:blur(4px);z-index:1000;place-items:center;padding:20px}
@@ -180,9 +196,9 @@ function tutupModalDenda() {
    </thead>
    <tbody>
     <?php if ($q_list && $q_list instanceof mysqli_result &&$q_list->num_rows > 0): ?>
-        <?php while ($row = $q_list->fetch_assoc()):$status_class = strtolower($row['status']);$tgl_rencana = $row['tanggal_kembali_rencana'] ?? $row['tanggal_pinjam'];
-            $jam_selesai =$row['jam_selesai'] ?? '23:59:00';
-            $denda_db = (int)($row['denda_tercatat'] ?? 0);
+        <?php while ($row = $q_list->fetch_assoc()):$status_class = strtolower($row['status']);$tgl_rencana  = $row['tanggal_kembali_rencana'] ?? $row['tanggal_pinjam'];
+            $jam_selesai  =$row['jam_selesai'] ?? '23:59:00';
+            $denda_db     = (int)($row['denda_tercatat'] ?? 0);
         ?>
         <tr>
          <td><b>#STR-<?= sprintf('%04d', $row['id_peminjaman']) ?></b></td>
@@ -203,6 +219,9 @@ function tutupModalDenda() {
           <div class="action-container">
            <!-- Tombol Detail -->
            <a href="detail.php?id=<?= $row['id_peminjaman'] ?>" class="btn-action btn-detail" title="Lihat Detail Pesanan"><i class="fa-solid fa-eye"></i></a>
+
+           <!-- Tombol Cetak Laporan Peminjaman -->
+           <a href="cetak-struk.php?cetak=1&id=<?= $row['id_peminjaman'] ?>" target="_blank" class="btn-action btn-cetak" title="Cetak Laporan Peminjaman"><i class="fa-solid fa-print"></i></a>
 
            <?php if ($row['status'] === 'Disetujui'): ?>
             <button type="button" class="btn-action btn-kembali" onclick="cekDanProsesPengembalian(<?= $row['id_peminjaman'] ?>, '<?= $tgl_rencana ?>', '<?= $jam_selesai ?>')" title="Proses Pengembalian"><i class="fa-solid fa-rotate-left"></i></button>

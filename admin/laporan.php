@@ -1,5 +1,5 @@
 <?php
-// petugas/laporan.php - Rekap Laporan Peminjaman & Booking Sarpras
+// admin/laporan.php - Rekap Laporan Peminjaman & Booking Sarpras
 require __DIR__ . '/../koneksi.php';
 if (empty($_SESSION['u'])) { go('../index.php'); }
 
@@ -104,7 +104,7 @@ th:nth-child(7), td:nth-child(7){width:13%}
 </style>
 </head>
 <body>
-<?php include __DIR__ . '/header.php'; ?>
+<?php include __DIR__ . '/../petugas/header.php'; ?>
 <main class="main-content">
  <div class="top-bar">
   <div>

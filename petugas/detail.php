@@ -77,8 +77,10 @@ body{font-family:var(--sans);color:var(--ink);min-height:100vh;display:flex;over
 
 .top-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;background:var(--ivory);padding:20px 24px;border-radius:20px;border:1px solid var(--line);box-shadow:0 10px 25px -15px rgba(15,95,88,.2)}
 .top-bar h1{font-family:var(--serif);font-size:26px;font-weight:700}
-.btn-back{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;background:var(--grad-hidup);color:#fff;border-radius:12px;font-weight:700;font-size:13px;text-decoration:none;box-shadow:0 4px 12px rgba(15,125,112,.3);transition:.2s}
-.btn-back:hover{transform:translateY(-1px)}
+.action-buttons{display:flex;gap:10px;align-items:center}
+.btn-back{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;background:var(--cream);color:var(--teal);border:1px solid var(--line);border-radius:12px;font-weight:700;font-size:13px;text-decoration:none;transition:.2s}
+.btn-cetak-detail{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;background:var(--grad-hidup);color:#fff;border-radius:12px;font-weight:700;font-size:13px;text-decoration:none;box-shadow:0 4px 12px rgba(15,125,112,.3);transition:.2s}
+.btn-back:hover, .btn-cetak-detail:hover{transform:translateY(-1px)}
 
 .detail-grid{display:grid;grid-template-columns:1.6fr 1fr;gap:24px}
 .card{background:var(--ivory);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:0 12px 25px -15px rgba(15,95,88,.15);margin-bottom:24px}
@@ -113,7 +115,10 @@ th{background:rgba(15,95,88,.05);color:var(--teal);font-weight:700;font-size:11p
    <h1>Rincian Pesanan #STR-<?= sprintf('%04d', $id) ?></h1>
    <p style="font-size:12.5px;color:var(--muted)">Informasi lengkap daftar alat, jadwal sesi, serta keperluan penggunaan fasilitas.</p>
   </div>
-  <a href="persetujuan.php" class="btn-back"><i class="fa-solid fa-arrow-left"></i> Kembali</a>
+  <div class="action-buttons">
+   <a href="cetak-struk.php?cetak=1&id=<?= $id ?>" target="_blank" class="btn-cetak-detail"><i class="fa-solid fa-print"></i> Cetak Laporan</a>
+   <a href="persetujuan.php" class="btn-back"><i class="fa-solid fa-arrow-left"></i> Kembali</a>
+  </div>
  </div>
 
  <div class="detail-grid">

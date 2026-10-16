@@ -1,7 +1,14 @@
 <?php
-// petugas/pengajuan.php - Form Pengajuan dengan Sistem Keranjang Multi-Alat
+// petugas/ajukan.php - Form Pengajuan dengan Sistem Keranjang Multi-Alat
+// Hak akses: hanya ADMIN dan PEMINJAM. Petugas tidak boleh mengajukan peminjaman.
 require __DIR__ . '/../koneksi.php';
 if (empty($_SESSION['u'])) { go('../index.php'); exit; }
+
+$level_login = strtolower($_SESSION['u']['level'] ?? $_SESSION['u']['role'] ?? '');
+if (!in_array($level_login, ['admin', 'peminjam'], true)) {
+    go('index.php'); // petugas dialihkan ke dashboard
+    exit;
+}
 
 // Inisialisasi Keranjang Sesi untuk Alat
 if (!isset($_SESSION['cart_alat'])) { $_SESSION['cart_alat'] = []; }

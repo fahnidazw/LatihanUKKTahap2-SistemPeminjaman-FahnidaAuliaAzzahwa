@@ -1,62 +1,110 @@
 <?php
-// petugas/users.php - Manajemen Pengguna Sistem
+// admin/users.php - Manajemen Pengguna Sistem
+// Admin   : CRUD penuh (tambah, ubah, hapus)
+// Petugas : hanya melihat (tanpa tombol dan tanpa proses CRUD)
+// Peminjam: tidak punya akses
 require __DIR__ . '/../koneksi.php';
 if (empty($_SESSION['u'])) { go('../index.php'); }
 
-$level_login = strtolower($_SESSION['u']['level'] ?? $_SESSION['u']['role'] ?? 'petugas');
-if ($level_login !== 'admin') {
-    echo "<script>alert('Akses ditolak! Halaman ini khusus Administrator.'); window.location='index.php';</script>";
+$level_login = strtolower($_SESSION['u']['level'] ?? $_SESSION['u']['role'] ?? '');
+if (!in_array($level_login, ['admin', 'petugas'], true)) {
+    echo "<script>alert('Akses ditolak! Halaman ini hanya untuk Administrator dan Petugas.'); window.location='../petugas/index.php';</script>";
     exit;
 }
+$can_edit = ($level_login === 'admin');
+$self     = basename($_SERVER['PHP_SELF']);
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
-$pesan = ''; $sukses = false;
+$levels    = ['Siswa', 'Guru', 'Petugas', 'Admin'];
+$pesan     = '';
+$aksi_post = '';
 
-// Proses Hapus User (Diletakkan di paling atas sebelum HTML)
-if (isset($_GET['aksi']) && $_GET['aksi'] === 'hapus' && isset($_GET['id'])) {
-    $id_hapus = (int)$_GET['id'];
-    if ($id_hapus !== (int)$_SESSION['u']['id_user']) {
-        q("DELETE FROM users WHERE id_user = ?", 'i', $id_hapus);
-    }
-    go('users.php');
-}
-
-// Proses Tambah & Edit User
+// ---------- Proses POST (khusus admin) ----------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$can_edit) {
+        $_SESSION['flash_user'] = ['Akses ditolak. Petugas hanya dapat melihat data pengguna.', 'error'];
+        go($self);
+    }
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        $_SESSION['flash_user'] = ['Sesi tidak valid, muat ulang halaman lalu coba lagi.', 'error'];
+        go($self);
+    }
+
     $aksi          = $_POST['aksi'] ?? '';
+    $aksi_post     = $aksi;
     $nama_lengkap  = trim($_POST['nama_lengkap'] ?? '');
     $username      = trim($_POST['username'] ?? '');
     $password      = trim($_POST['password'] ?? '');
-    $level         = trim($_POST['level'] ?? 'Siswa');
+    $level         = ucfirst(strtolower(trim($_POST['level'] ?? 'Siswa')));
     $kelas_jabatan = trim($_POST['kelas_jabatan'] ?? '');
     $id_user       = (int)($_POST['id_user'] ?? 0);
+    if (!in_array($level, $levels, true)) { $level = 'Siswa'; }
+
+    if ($aksi === 'hapus') {
+        $id_hapus = (int)($_POST['id_user'] ?? 0);
+        if ($id_hapus === (int)$_SESSION['u']['id_user']) {
+            $_SESSION['flash_user'] = ['Akun yang sedang dipakai tidak bisa dihapus.', 'error'];
+        } else {
+            $r = q("SELECT username FROM users WHERE id_user = ?", 'i', $id_hapus);
+            $d = $r ? $r->fetch_assoc() : null;
+            if (!$d) {
+                $_SESSION['flash_user'] = ['Pengguna tidak ditemukan.', 'error'];
+            } elseif (q("DELETE FROM users WHERE id_user = ?", 'i', $id_hapus)) {
+                logact('Menghapus pengguna ' . $d['username']);
+                $_SESSION['flash_user'] = ['Akun "' . $d['username'] . '" berhasil dihapus.', 'success'];
+            } else {
+                $_SESSION['flash_user'] = ['Akun "' . $d['username'] . '" tidak bisa dihapus karena sudah punya riwayat peminjaman.', 'error'];
+            }
+        }
+        go($self);
+    }
 
     if ($aksi === 'tambah') {
-        if (!empty($nama_lengkap) && !empty($username) && !empty($password)) {
+        if ($nama_lengkap !== '' && $username !== '' && $password !== '') {
             $cek = q("SELECT id_user FROM users WHERE username = ?", 's', $username);
             if ($cek && $cek->num_rows > 0) {
                 $pesan = "Username tersebut sudah digunakan oleh akun lain!";
             } else {
-                q("INSERT INTO users (nama_lengkap, username, password, level, kelas_jabatan) VALUES (?, ?, ?, ?, ?)", 'sssss', $nama_lengkap, $username, $password, $level, $kelas_jabatan);
-                $sukses = true; $pesan = "Akun pengguna baru berhasil ditambahkan!";
+                $hash = password_hash($password, PASSWORD_DEFAULT);
+                if (q("INSERT INTO users (nama_lengkap, username, password, level, kelas_jabatan) VALUES (?, ?, ?, ?, ?)", 'sssss', $nama_lengkap, $username, $hash, $level, $kelas_jabatan)) {
+                    logact('Menambah pengguna ' . $username);
+                    $_SESSION['flash_user'] = ['Akun pengguna baru berhasil ditambahkan!', 'success'];
+                    go($self);
+                }
+                $pesan = "Gagal menyimpan data pengguna.";
             }
         } else {
             $pesan = "Lengkapi nama, username, dan password.";
         }
     } elseif ($aksi === 'edit' && $id_user > 0) {
-        if (!empty($nama_lengkap) && !empty($username)) {
-            if (!empty($password)) {
-                q("UPDATE users SET nama_lengkap = ?, username = ?, password = ?, level = ?, kelas_jabatan = ? WHERE id_user = ?", 'sssssi', $nama_lengkap, $username, $password, $level, $kelas_jabatan, $id_user);
+        if ($nama_lengkap !== '' && $username !== '') {
+            $cek = q("SELECT id_user FROM users WHERE username = ? AND id_user <> ?", 'si', $username, $id_user);
+            if ($cek && $cek->num_rows > 0) {
+                $pesan = "Username tersebut sudah digunakan oleh akun lain!";
             } else {
-                q("UPDATE users SET nama_lengkap = ?, username = ?, level = ?, kelas_jabatan = ? WHERE id_user = ?", 'ssssi', $nama_lengkap, $username, $level, $kelas_jabatan, $id_user);
+                if ($password !== '') {
+                    $hash = password_hash($password, PASSWORD_DEFAULT);
+                    $ok = q("UPDATE users SET nama_lengkap = ?, username = ?, password = ?, level = ?, kelas_jabatan = ? WHERE id_user = ?", 'sssssi', $nama_lengkap, $username, $hash, $level, $kelas_jabatan, $id_user);
+                } else {
+                    $ok = q("UPDATE users SET nama_lengkap = ?, username = ?, level = ?, kelas_jabatan = ? WHERE id_user = ?", 'ssssi', $nama_lengkap, $username, $level, $kelas_jabatan, $id_user);
+                }
+                if ($ok) {
+                    logact('Mengubah pengguna ' . $username);
+                    $_SESSION['flash_user'] = ['Data pengguna berhasil diperbarui!', 'success'];
+                    go($self);
+                }
+                $pesan = "Gagal memperbarui data pengguna.";
             }
-            $sukses = true; $pesan = "Data pengguna berhasil diperbarui!";
         } else {
             $pesan = "Nama lengkap dan username wajib diisi.";
         }
     }
 }
 
-// Fitur Pencarian & Filter Role (Tanpa spasi pada nama variabel)
+$flash_user = $_SESSION['flash_user'] ?? null;
+unset($_SESSION['flash_user']);
+
+// ---------- Pencarian & Filter Role ----------
 $cari  = trim($_GET['cari'] ?? '');
 $peran = trim($_GET['role'] ?? '');
 
@@ -64,18 +112,18 @@ $sql = "SELECT * FROM users WHERE 1=1";
 $params = [];
 $types  = '';
 
-if (!empty($cari)) {
+if ($cari !== '') {
     $sql .= " AND (nama_lengkap LIKE ? OR username LIKE ?)";
     $params[] = "%$cari%";
     $params[] = "%$cari%";
     $types  .= 'ss';
 }
-if (!empty($peran)) {
+if ($peran !== '') {
     $sql .= " AND level = ?";
     $params[] = $peran;
     $types  .= 's';
 }
-$sql .= " ORDER BY level ASC, nama_lengkap ASC";
+$sql .= " ORDER BY level ASC, nama_lengkap ASC LIMIT 300";
 
 $q_users = !empty($params) ? q($sql, $types, ...$params) : q($sql);
 ?>
@@ -106,8 +154,10 @@ body{font-family:var(--sans);color:var(--ink);min-height:100vh;display:flex;over
 
 .top-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;background:var(--ivory);padding:20px 24px;border-radius:20px;border:1px solid var(--line);box-shadow:0 10px 25px -15px rgba(15,95,88,.2)}
 .top-bar h1{font-family:var(--serif);font-size:26px;font-weight:700}
+.mode-tag{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;font-size:11.5px;font-weight:700;background:rgba(255,152,0,.18);color:#b36b00}
 
 .content-grid{display:grid;grid-template-columns:340px 1fr;gap:24px}
+.content-grid.single{grid-template-columns:1fr}
 .card{background:var(--ivory);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:0 12px 25px -15px rgba(15,95,88,.15)}
 .card h3{font-family:var(--serif);font-size:20px;font-weight:700;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--line)}
 
@@ -132,15 +182,17 @@ th{font-weight:700;color:var(--teal);text-transform:uppercase;font-size:10.5px;b
 .badge.admin{background:rgba(220,53,69,.2);color:#dc3545}
 .badge.petugas{background:rgba(255,152,0,.2);color:#b36b00}
 .badge.guru{background:rgba(13,110,253,.2);color:#0d6efd}
-.badge.siswa{background:rgba(25,135,84,.2);color:#198754}
+.badge.siswa,.badge.peminjam{background:rgba(25,135,84,.2);color:#198754}
 
-.btn-action{padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
-.btn-edit{background:rgba(255,193,7,.2);color:#b38600;border:0}
+.aksi-wrap{display:flex;gap:6px;align-items:center}
+.aksi-wrap form{margin:0}
+.btn-action{padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:0;font-family:inherit}
+.btn-edit{background:rgba(255,193,7,.2);color:#b38600}
 .btn-hapus{background:rgba(220,53,69,.2);color:#dc3545}
 
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(10,42,39,0.6);backdrop-filter:blur(4px);z-index:1000;place-items:center;padding:20px}
 .modal-overlay.active{display:grid}
-.modal-card{background:var(--ivory);border:1px solid var(--line);border-radius:24px;width:100%;max-width:440px;padding:28px;box-shadow:0 20px 40px rgba(0,0,0,.3)}
+.modal-card{background:var(--ivory);border:1px solid var(--line);border-radius:24px;width:100%;max-width:440px;max-height:calc(100vh - 40px);overflow-y:auto;padding:28px;box-shadow:0 20px 40px rgba(0,0,0,.3)}
 .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--line)}
 .modal-header h3{font-family:var(--serif);font-size:20px;font-weight:700}
 .modal-close{background:0;border:0;font-size:18px;cursor:pointer;color:var(--muted)}
@@ -148,43 +200,58 @@ th{font-weight:700;color:var(--teal);text-transform:uppercase;font-size:10.5px;b
 .alert{padding:12px;border-radius:10px;margin-bottom:16px;font-size:12.5px;font-weight:600}
 .alert.success{background:rgba(25,135,84,.15);color:#198754}
 .alert.error{background:rgba(220,53,69,.15);color:#dc3545}
+.alert.info{background:rgba(13,110,253,.12);color:#0b5ed7}
 .footer{margin-top:30px;text-align:center;font-size:11px;color:var(--muted)}
 @media(max-width:1024px){.content-grid{grid-template-columns:1fr}.main-content{margin-left:72px;padding:16px}}
 </style>
+<?php if ($can_edit): ?>
 <script>
-function bukaModalEditUser(id, nama, username, level, kelas) {
-    document.getElementById('edit_id_user').value = id;
-    document.getElementById('edit_nama_lengkap').value = nama;
-    document.getElementById('edit_username').value = username;
-    document.getElementById('edit_level').value = level;
-    document.getElementById('edit_kelas_jabatan').value = kelas;
+function bukaModalEditUser(btn) {
+    var d = JSON.parse(btn.getAttribute('data-u'));
+    document.getElementById('edit_id_user').value = d.id;
+    document.getElementById('edit_nama_lengkap').value = d.nama;
+    document.getElementById('edit_username').value = d.username;
+    document.getElementById('edit_level').value = d.level;
+    document.getElementById('edit_kelas_jabatan').value = d.kelas;
     document.getElementById('modalEditUser').classList.add('active');
 }
 function tutupModalEditUser() {
     document.getElementById('modalEditUser').classList.remove('active');
 }
 </script>
+<?php endif; ?>
 </head>
 <body>
-<?php include __DIR__ . '/header.php'; ?>
+<!-- Memuat header dari folder petugas -->
+<?php include __DIR__ . '/../petugas/header.php'; ?>
 <main class="main-content">
  <div class="top-bar">
   <div>
-   <h1>Manajemen Pengguna Sistem</h1>
-   <p style="font-size:12.5px;color:var(--muted)">Kelola data akun Administrator, Petugas, Guru, dan Siswa.</p>
+   <h1><?= $can_edit ? 'Manajemen Pengguna Sistem' : 'Data Pengguna Sistem' ?></h1>
+   <p style="font-size:12.5px;color:var(--muted)">Data akun Administrator, Petugas, Guru, dan Siswa.</p>
   </div>
+  <?php if (!$can_edit): ?><span class="mode-tag"><i class="fa-solid fa-eye"></i> Mode lihat saja</span><?php endif; ?>
  </div>
 
- <div class="content-grid">
-  <!-- Form Tambah -->
+ <?php if ($flash_user): ?>
+  <div class="alert <?= e($flash_user[1]) ?>" role="alert"><?= e($flash_user[0]) ?></div>
+ <?php endif; ?>
+ <?php if (!$can_edit): ?>
+  <div class="alert info"><i class="fa-solid fa-circle-info"></i> Petugas hanya dapat melihat data pengguna. Tambah, ubah, dan hapus akun hanya bisa dilakukan oleh Administrator.</div>
+ <?php endif; ?>
+
+ <div class="content-grid <?= $can_edit ? '' : 'single' ?>">
+  <?php if ($can_edit): ?>
+  <!-- Form Tambah (khusus admin) -->
   <div class="card">
    <h3>Tambah Pengguna Baru</h3>
-   <?php if ($pesan !== '' && isset($_POST['aksi']) && $_POST['aksi'] === 'tambah'): ?>
-    <div class="alert <?= $sukses ? 'success' : 'error' ?>"><?= e($pesan) ?></div>
+   <?php if ($pesan !== '' && $aksi_post === 'tambah'): ?>
+    <div class="alert error"><?= e($pesan) ?></div>
    <?php endif; ?>
 
    <form method="POST">
     <input type="hidden" name="aksi" value="tambah">
+    <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token']) ?>">
     <div class="form-group">
      <label>Nama Lengkap</label>
      <input type="text" name="nama_lengkap" class="form-control" placeholder="Nama lengkap..." required>
@@ -200,10 +267,7 @@ function tutupModalEditUser() {
     <div class="form-group">
      <label>Level / Peran</label>
      <select name="level" class="form-control">
-      <option value="Siswa">Siswa</option>
-      <option value="Guru">Guru</option>
-      <option value="Petugas">Petugas</option>
-      <option value="Admin">Admin</option>
+      <?php foreach ($levels as $lv): ?><option value="<?= $lv ?>"><?= $lv ?></option><?php endforeach; ?>
      </select>
     </div>
     <div class="form-group">
@@ -213,55 +277,69 @@ function tutupModalEditUser() {
     <button type="submit" class="btn-submit"><i class="fa-solid fa-user-plus"></i> Tambah Akun</button>
    </form>
   </div>
+  <?php endif; ?>
 
   <!-- Tabel & Filter User -->
   <div class="card">
    <h3>Daftar Pengguna Terdaftar</h3>
-   <?php if ($pesan !== '' && isset($_POST['aksi']) && $_POST['aksi'] === 'edit'): ?>
-    <div class="alert <?= $sukses ? 'success' : 'error' ?>"><?= e($pesan) ?></div>
+   <?php if ($pesan !== '' && $aksi_post === 'edit'): ?>
+    <div class="alert error"><?= e($pesan) ?></div>
    <?php endif; ?>
 
    <form method="GET" class="filter-bar">
-    <input type="text" name="cari" placeholder="Cari nama atau username..." value="<?= htmlspecialchars($cari) ?>">
+    <input type="text" name="cari" placeholder="Cari nama atau username..." value="<?= e($cari) ?>">
+    <?php if ($peran !== ''): ?><input type="hidden" name="role" value="<?= e($peran) ?>"><?php endif; ?>
     <button type="submit" class="btn-filter"><i class="fa-solid fa-magnifying-glass"></i></button>
-    <a href="users.php" class="btn-shortcut <?= empty($peran) ? 'active' : '' ?>">Semua</a>
-    <a href="users.php?role=Admin" class="btn-shortcut <?= $peran === 'Admin' ? 'active' : '' ?>">Admin</a>
-    <a href="users.php?role=Petugas" class="btn-shortcut <?= $peran === 'Petugas' ? 'active' : '' ?>">Petugas</a>
-    <a href="users.php?role=Guru" class="btn-shortcut <?= $peran === 'Guru' ? 'active' : '' ?>">Guru</a>
-    <a href="users.php?role=Siswa" class="btn-shortcut <?= $peran === 'Siswa' ? 'active' : '' ?>">Siswa</a>
+    <a href="<?= e($self) ?>" class="btn-shortcut <?= $peran === '' ? 'active' : '' ?>">Semua</a>
+    <?php foreach (['Admin', 'Petugas', 'Guru', 'Siswa'] as $lv): ?>
+     <a href="<?= e($self) ?>?role=<?= $lv ?>" class="btn-shortcut <?= strcasecmp($peran, $lv) === 0 ? 'active' : '' ?>"><?= $lv ?></a>
+    <?php endforeach; ?>
    </form>
 
    <table>
     <thead>
      <tr>
-      <th style="width:25%">Nama Lengkap</th>
-      <th style="width:18%">Username</th>
-      <th style="width:15%">Level</th>
-      <th style="width:22%">Kelas / Jabatan</th>
-      <th style="width:20%">Aksi</th>
+      <th style="width:<?= $can_edit ? '25' : '30' ?>%">Nama Lengkap</th>
+      <th style="width:<?= $can_edit ? '18' : '22' ?>%">Username</th>
+      <th style="width:<?= $can_edit ? '15' : '18' ?>%">Level</th>
+      <th style="width:<?= $can_edit ? '22' : '30' ?>%">Kelas / Jabatan</th>
+      <?php if ($can_edit): ?><th style="width:20%">Aksi</th><?php endif; ?>
      </tr>
     </thead>
     <tbody>
      <?php if ($q_users && $q_users->num_rows > 0): ?>
-         <?php while ($u = $q_users->fetch_assoc()): 
+         <?php while ($u = $q_users->fetch_assoc()):
              $lvl = strtolower($u['level']);
+             $data_edit = json_encode([
+                 'id' => (int)$u['id_user'], 'nama' => $u['nama_lengkap'], 'username' => $u['username'],
+                 'level' => ucfirst($lvl), 'kelas' => $u['kelas_jabatan'] ?? '',
+             ]);
          ?>
          <tr>
           <td><b><?= e($u['nama_lengkap']) ?></b></td>
           <td><?= e($u['username']) ?></td>
-          <td><span class="badge <?= $lvl ?>"><?= e($u['level']) ?></span></td>
+          <td><span class="badge <?= e($lvl) ?>"><?= e($u['level']) ?></span></td>
           <td><?= e($u['kelas_jabatan'] ?? '-') ?></td>
+          <?php if ($can_edit): ?>
           <td>
-           <button type="button" class="btn-action btn-edit" onclick="bukaModalEditUser(<?= $u['id_user'] ?>, '<?= htmlspecialchars($u['nama_lengkap'], ENT_QUOTES) ?>', '<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>', '<?= $u['level'] ?>', '<?= htmlspecialchars($u['kelas_jabatan'] ?? '', ENT_QUOTES) ?>')"><i class="fa-solid fa-pen-to-square"></i></button>
-           <?php if ((int)$u['id_user'] !== (int)$_SESSION['u']['id_user']): ?>
-            <a href="users.php?aksi=hapus&id=<?= $u['id_user'] ?>" class="btn-action btn-hapus" onclick="return confirm('Hapus akun pengguna ini?')"><i class="fa-solid fa-trash"></i></a>
-           <?php endif; ?>
+           <div class="aksi-wrap">
+            <button type="button" class="btn-action btn-edit" title="Edit" data-u="<?= e($data_edit) ?>" onclick="bukaModalEditUser(this)"><i class="fa-solid fa-pen-to-square"></i></button>
+            <?php if ((int)$u['id_user'] !== (int)$_SESSION['u']['id_user']): ?>
+             <form method="POST" onsubmit="return confirm('Hapus akun pengguna ini?')">
+              <input type="hidden" name="aksi" value="hapus">
+              <input type="hidden" name="id_user" value="<?= (int)$u['id_user'] ?>">
+              <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token']) ?>">
+              <button type="submit" class="btn-action btn-hapus" title="Hapus"><i class="fa-solid fa-trash"></i></button>
+             </form>
+            <?php endif; ?>
+           </div>
           </td>
+          <?php endif; ?>
          </tr>
          <?php endwhile; ?>
      <?php else: ?>
          <tr>
-          <td colspan="5" style="text-align:center;padding:30px;color:var(--muted)">Belum ada data pengguna yang terdaftar.</td>
+          <td colspan="<?= $can_edit ? 5 : 4 ?>" style="text-align:center;padding:30px;color:var(--muted)">Belum ada data pengguna yang terdaftar.</td>
          </tr>
      <?php endif; ?>
     </tbody>
@@ -269,17 +347,19 @@ function tutupModalEditUser() {
   </div>
  </div>
 
- <!-- Modal Edit User -->
+ <?php if ($can_edit): ?>
+ <!-- Modal Edit User (khusus admin) -->
  <div class="modal-overlay" id="modalEditUser">
   <div class="modal-card">
    <div class="modal-header">
     <h3>Edit Data Pengguna</h3>
-    <button class="modal-close" onclick="tutupModalEditUser()"><i class="fa-solid fa-xmark"></i></button>
+    <button type="button" class="modal-close" onclick="tutupModalEditUser()" aria-label="Tutup"><i class="fa-solid fa-xmark"></i></button>
    </div>
    <form method="POST">
     <input type="hidden" name="aksi" value="edit">
+    <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token']) ?>">
     <input type="hidden" name="id_user" id="edit_id_user">
-    
+
     <div class="form-group">
      <label>Nama Lengkap</label>
      <input type="text" name="nama_lengkap" id="edit_nama_lengkap" class="form-control" required>
@@ -295,10 +375,7 @@ function tutupModalEditUser() {
     <div class="form-group">
      <label>Level / Peran</label>
      <select name="level" id="edit_level" class="form-control">
-      <option value="Siswa">Siswa</option>
-      <option value="Guru">Guru</option>
-      <option value="Petugas">Petugas</option>
-      <option value="Admin">Admin</option>
+      <?php foreach ($levels as $lv): ?><option value="<?= $lv ?>"><?= $lv ?></option><?php endforeach; ?>
      </select>
     </div>
     <div class="form-group">
@@ -309,6 +386,7 @@ function tutupModalEditUser() {
    </form>
   </div>
  </div>
+ <?php endif; ?>
 
  <div class="footer"><?= date('Y') ?> &bull; Sarpras SMK Negeri 3 Kendal</div>
 </main>

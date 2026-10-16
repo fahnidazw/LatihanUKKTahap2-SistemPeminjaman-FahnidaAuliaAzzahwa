@@ -52,7 +52,7 @@ $from  = "FROM peminjaman p
 $where = "WHERE 1=1" . $own; $tp = ''; $pr = [];
 
 if (in_array($status, $daftar_status, true)) { $where .= " AND p.status = ?"; $tp .= 's'; $pr[] = $status; } else { $status = ''; }
-if ($jenis === 'alat')       { $where .= " AND COALESCE(p.id_ruangan,0) = 0"; }
+if ($jenis === 'alat')     { $where .= " AND COALESCE(p.id_ruangan,0) = 0"; }
 elseif ($jenis === 'ruangan')  { $where .= " AND COALESCE(p.id_ruangan,0) > 0"; }
 else { $jenis = ''; }
 
@@ -125,7 +125,6 @@ body{font-family:var(--sans);color:var(--ink);min-height:100vh;display:flex;over
 .flash.ok{background:rgba(15,157,138,.14);color:var(--teal);border:1px solid rgba(15,157,138,.35)}
 .flash.err{background:rgba(220,53,69,.12);color:var(--red);border:1px solid rgba(220,53,69,.35)}
 
-/* Card Ringkasan Lebih Panjang & Lebar Proporsional */
 .ringkas{display:grid;grid-template-columns:repeat(5, 1fr);gap:14px;margin-bottom:20px}
 .ringkas a{display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-radius:16px;text-decoration:none;color:var(--ink);background:var(--ivory);border:1px solid var(--line);box-shadow:0 8px 20px -10px rgba(15,95,88,.3);transition:.2s}
 .ringkas a:hover{transform:translateY(-2px);border-color:var(--teal)}
@@ -144,6 +143,7 @@ body{font-family:var(--sans);color:var(--ink);min-height:100vh;display:flex;over
 .btn-action{width:32px;height:32px;border-radius:8px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,.1);transition:.15s;border:0;cursor:pointer}
 .btn-action:hover{transform:translateY(-1px)}
 .btn-detail{background:var(--cream);color:var(--teal);border:1px solid var(--line)}
+.btn-cetak{background:#2b8a3e;color:#fff}
 .btn-batal{background:#dc3545;color:#fff}
 
 .card-box{padding:24px;border-radius:22px;background:var(--ivory);border:1px solid var(--line);box-shadow:0 14px 28px -16px rgba(15,95,88,.2)}
@@ -252,7 +252,12 @@ tr:last-child td{border-bottom:0}
        <td><?= $denda > 0 ? '<b style="color:var(--red)">Rp ' . number_format($denda, 0, ',', '.') . '</b>' : '<span class="sub">-</span>' ?></td>
        <td>
         <div class="action-container">
+         <!-- Tombol Lihat Detail -->
          <a href="detail.php?id=<?= $t['id_peminjaman'] ?>" class="btn-action btn-detail" title="Lihat Detail Pesanan"><i class="fa-solid fa-eye"></i></a>
+
+         <!-- Tombol Cetak Bukti Peminjaman Satuan -->
+         <a href="cetak-struk.php?id=<?= $t['id_peminjaman'] ?>" target="_blank" class="btn-action btn-cetak" title="Cetak Bukti Peminjaman"><i class="fa-solid fa-print"></i></a>
+
          <?php if (!$is_staff && $t['status'] === 'Pending'): ?>
           <form method="post" onsubmit="return confirm('Batalkan pengajuan ini?')" style="display:inline;">
            <input type="hidden" name="aksi" value="batal"><input type="hidden" name="id" value="<?= (int)$t['id_peminjaman'] ?>">
@@ -263,7 +268,7 @@ tr:last-child td{border-bottom:0}
        </td>
       </tr>
      <?php endwhile; else: ?>
-      <tr><td colspan="<?= $is_staff ? 8 : 7 ?>"><div class="kosong-box"><i class="fa-solid fa-folder-open"></i>Tidak ada riwayat yang cocok.</div></td></tr>
+     <tr><td colspan="<?= $is_staff ? 8 : 7 ?>"><div class="kosong-box"><i class="fa-solid fa-folder-open"></i>Tidak ada riwayat yang cocok.</div></td></tr>
      <?php endif; ?>
     </tbody>
    </table>

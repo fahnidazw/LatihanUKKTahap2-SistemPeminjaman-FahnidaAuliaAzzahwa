@@ -1,5 +1,6 @@
 <?php
-// petugas/header.php - Sidebar polos (tanpa foto) + pembatasan hak akses (RBAC) + notifikasi angka
+// header.php - Sidebar polos (tanpa foto) + pembatasan hak akses (RBAC) + notifikasi angka
+// Letak file ini: /petugas/header.php  (dipakai juga oleh halaman di /admin/)
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -8,18 +9,38 @@ $nama_user  = $_SESSION['u']['nama'] ?? $_SESSION['u']['nama_lengkap'] ?? 'Pengg
 $level_user = strtolower($_SESSION['u']['level'] ?? $_SESSION['u']['role'] ?? 'petugas');
 $is_admin   = ($level_user === 'admin');
 $is_staff   = in_array($level_user, ['admin', 'petugas'], true);
+$can_ajukan = in_array($level_user, ['admin', 'peminjam'], true); // petugas tidak boleh mengajukan peminjaman
+
+// ---- ROOT PROYEK OTOMATIS ----
+// Dihitung dari script yang sedang berjalan, jadi benar baik halaman dibuka
+// dari folder /admin/ maupun /petugas/ (tidak perlu tulis path manual lagi).
+$current_script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME']);
+$is_in_admin = (strpos($current_script, '/admin/') !== false);
+
+if (preg_match('#^(.*/)(admin|petugas)/[^/]*$#i', $current_script, $m)) {
+    $root = $m[1];                                     // bagian sebelum /admin/ atau /petugas/
+} else {
+    $root = rtrim(dirname($current_script), '/') . '/';
+}
+
+// Encode tiap segmen (spasi -> %20) supaya URL aman
+$base_url     = implode('/', array_map('rawurlencode', explode('/', $root)));
+$path_petugas = $base_url . 'petugas/';
+$path_admin   = $base_url . 'admin/';
 
 if (!function_exists('menu_aktif')) {
-    function menu_aktif($files) {
-        $now = basename($_SERVER['SCRIPT_NAME']);
+    function menu_aktif($files, $folder = '') {
+        $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME']);
+        $now    = basename($script);
+        $in_admin = (strpos($script, '/admin/') !== false);
+        // Cocokkan juga folder-nya, supaya file bernama sama di folder berbeda tidak ikut aktif
+        if ($folder === 'admin' && !$in_admin) return '';
+        if ($folder === 'petugas' && $in_admin) return '';
         return in_array($now, (array)$files, true) ? ' active' : '';
     }
 }
 
 // ---- NOTIFIKASI ANGKA (otomatis hilang saat sudah 0) ----
-// Persetujuan  : jumlah pengajuan berstatus Pending (hilang setelah disetujui/ditolak)
-// Pengembalian : jumlah peminjaman berstatus Disetujui yang belum dikembalikan,
-//                baik alat maupun ruangan/lab (hilang setelah statusnya jadi Dikembalikan)
 $n_pending = 0;
 $n_belum_kembali = 0;
 if ($is_staff && function_exists('q')) {
@@ -30,11 +51,14 @@ if ($is_staff && function_exists('q')) {
         $n_pending = 0; $n_belum_kembali = 0;
     }
 }
-$n_cart = count($_SESSION['cart'] ?? []);
+$n_cart = $can_ajukan ? count($_SESSION['cart_alat'] ?? []) : 0;
 
-$item = function ($files, $icon, $label, $cnt = 0, $extra = '') {
-    $href = is_array($files) ? $files[0] : $files;
-    echo '<li class="menu-item' . menu_aktif($files) . $extra . '">'
+// Fungsi render item menu: $target_folder menentukan 'admin' atau 'petugas'
+$item = function ($file, $icon, $label, $cnt = 0, $extra = '', $target_folder = 'petugas') use ($path_petugas, $path_admin) {
+    $folder_url = ($target_folder === 'admin') ? $path_admin : $path_petugas;
+    $href = $folder_url . $file;
+
+    echo '<li class="menu-item' . menu_aktif([$file], $target_folder) . $extra . '">'
        . '<a href="' . htmlspecialchars($href) . '" title="' . htmlspecialchars($label) . '">'
        . '<i class="fa-solid ' . $icon . '"></i> <span>' . htmlspecialchars($label) . '</span>'
        . ($cnt > 0 ? '<b class="cnt">' . ($cnt > 99 ? '99+' : (int)$cnt) . '</b>' : '')
@@ -42,6 +66,10 @@ $item = function ($files, $icon, $label, $cnt = 0, $extra = '') {
 };
 ?>
 <style>
+:root{
+ --ink:#0D2B2E; --teal:#0F5F58; --teal-deep:#0A3A36; --sun:#FFC54D; --sun-deep:#B47A00; --sun-soft:#FFE3A1;
+ --cream:#E3EDE9; --ivory:#F6FAF8; --line:#CDDFD8; --muted:#5F7A78;
+}
 .sidebar{
  position:fixed;top:0;left:0;z-index:100;width:280px;height:100vh;
  display:flex;flex-direction:column;padding:26px 18px 22px;
@@ -89,13 +117,10 @@ $item = function ($files, $icon, $label, $cnt = 0, $extra = '') {
  box-shadow:inset 0 0 0 1px rgba(255,197,77,.28)}
 .menu-item.active a::before{content:"";position:absolute;left:-18px;top:10px;bottom:10px;width:4px;border-radius:0 4px 4px 0;background:var(--sun,#FFC54D)}
 .menu-item.active a i{color:var(--ink,#0D2B2E);background:linear-gradient(145deg,#F3DDA0,#E8B84A)}
-/* notifikasi angka */
 .menu-item a .cnt{margin-left:auto;min-width:22px;padding:2px 7px;border-radius:999px;text-align:center;font-size:10.5px;font-weight:700;color:var(--ink,#0D2B2E);background:var(--sun,#FFC54D);box-shadow:0 0 0 3px rgba(255,197,77,.18)}
-/* badge Pengembalian (barang/ruangan belum dikembalikan) diberi warna oranye agar beda dari Persetujuan (emas) */
 .menu-item.notif-kembali a .cnt{background:#FF9F6B;color:#4A1A00;box-shadow:0 0 0 3px rgba(255,159,107,.22)}
 .menu-item a:focus-visible{outline:2px solid var(--sun,#FFC54D);outline-offset:2px}
 
-/* tombol keluar merah (menempel di dasar sidebar) */
 .logout-wrap{margin-top:auto;padding-top:20px}
 .btn-logout{display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 14px;border-radius:14px;
  font-size:13.5px;font-weight:700;text-decoration:none;color:#fff;
@@ -132,45 +157,60 @@ $item = function ($files, $icon, $label, $cnt = 0, $extra = '') {
   </div>
  </div>
 
+ <!-- ===== MENU UMUM: semua file ada di folder /petugas/ ===== -->
  <div class="menu-label">Utama</div>
  <ul class="menu-list">
-  <?php $item('index.php', 'fa-house-chimney', 'Dashboard'); ?>
+  <?php $item('index.php', 'fa-house-chimney', 'Dashboard', 0, '', 'petugas'); ?>
  </ul>
 
  <div class="menu-label">Peminjaman &amp; Booking</div>
  <ul class="menu-list">
   <?php
-  $item('katalog-alat.php', 'fa-boxes-stacked', 'Katalog Alat & Inventaris');
-  $item('booking-ruangan.php', 'fa-door-open', 'Booking Ruang & Lab');
-  $item('ajukan.php', 'fa-circle-plus', 'Form Pengajuan', $n_cart);
-  $item('riwayat.php', 'fa-clock-rotate-left', $is_staff ? 'Semua Riwayat' : 'Riwayat Saya');
+  $item('katalog-alat.php', 'fa-boxes-stacked', 'Katalog Alat & Inventaris', 0, '', 'petugas');
+  $item('booking-ruangan.php', 'fa-door-open', 'Booking Ruang & Lab', 0, '', 'petugas');
+  if ($can_ajukan) {
+      $item('ajukan.php', 'fa-circle-plus', 'Form Pengajuan', $n_cart, '', 'petugas');
+  }
+  $item('riwayat.php', 'fa-clock-rotate-left', $is_staff ? 'Semua Riwayat' : 'Riwayat Saya', 0, '', 'petugas');
   if ($is_staff) {
-      $item('persetujuan.php', 'fa-clipboard-check', 'Persetujuan', $n_pending);
-      $item('pengembalian.php', 'fa-arrow-rotate-left', 'Pengembalian & Denda', $n_belum_kembali, ' notif-kembali');
+      $item('persetujuan.php', 'fa-clipboard-check', 'Persetujuan', $n_pending, '', 'petugas');
+      $item('pengembalian.php', 'fa-arrow-rotate-left', 'Pengembalian & Denda', $n_belum_kembali, ' notif-kembali', 'petugas');
   }
   ?>
  </ul>
 
- <?php if ($is_admin): ?>
-  <div class="menu-label">Data Master</div>
-  <ul class="menu-list">
-   <?php
-   $item('inventaris.php', 'fa-toolbox', 'Kelola Inventaris');
-   $item('users.php', 'fa-users-gear', 'Manajemen User');
-   ?>
-  </ul>
+ <!-- ===== MENU KHUSUS: Data Master (Hanya untuk Staff / Admin & Petugas) ===== -->
+ <?php if ($is_staff): ?>
+ <div class="menu-label">Data Master</div>
+ <ul class="menu-list">
+  <?php
+  if ($is_admin) {
+      $item('kategori.php', 'fa-tags', 'Kelola Kategori', 0, '', 'admin');
+  }
+  $item('inventaris.php', 'fa-toolbox', 'Kelola Inventaris', 0, '', 'admin');
+  ?>
+ </ul>
+ <?php endif; ?>
 
+ <?php if ($is_staff): ?>
+  <div class="menu-label">Pengguna</div>
+  <ul class="menu-list">
+   <?php $item('users.php', 'fa-users-gear', 'Manajemen User', 0, '', 'admin'); ?>
+  </ul>
+ <?php endif; ?>
+
+ <?php if ($is_admin): ?>
   <div class="menu-label">Laporan</div>
   <ul class="menu-list">
    <?php
-   $item('laporan.php', 'fa-file-lines', 'Laporan Rekap');
-   $item('log-aktivitas.php', 'fa-scroll', 'Log Aktivitas');
+   $item('laporan.php', 'fa-file-lines', 'Laporan Rekap', 0, '', 'admin');
+   $item('log-aktivitas.php', 'fa-scroll', 'Log Aktivitas', 0, '', 'admin');
    ?>
   </ul>
  <?php endif; ?>
 
  <div class="logout-wrap">
-  <a href="../logout.php" class="btn-logout" onclick="return confirm('Yakin ingin keluar dari sistem?')">
+  <a href="<?= $base_url ?>logout.php" class="btn-logout" onclick="return confirm('Yakin ingin keluar dari sistem?')">
    <i class="fa-solid fa-right-from-bracket"></i> <span>Keluar Sistem</span>
   </a>
  </div>

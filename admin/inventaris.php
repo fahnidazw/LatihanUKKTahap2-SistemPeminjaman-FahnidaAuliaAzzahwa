@@ -1,9 +1,14 @@
 <?php
-// petugas/kelola-inventaris.php - Manajemen Inventaris Alat Sekolah
-// Nama file bebas: semua link memakai $self, jadi tidak "Not Found" walau file diganti nama.
+// admin/inventaris.php - Manajemen Inventaris Alat Sekolah (Filter Kategori Khusus "Alat")
 require __DIR__ . '/../koneksi.php';
-if (empty($_SESSION['u'])) { go('../index.php'); }
+if (empty($_SESSION['u'])) { go('../index.php'); exit; }
 
+$level_login = strtolower($_SESSION['u']['level'] ?? $_SESSION['u']['role'] ?? '');
+if (!in_array($level_login, ['admin', 'petugas'], true)) {
+    echo "<script>alert('Akses ditolak! Halaman ini hanya untuk Administrator dan Petugas.'); window.location='../petugas/index.php';</script>";
+    exit;
+}
+$can_edit = ($level_login === 'admin');
 $self = basename($_SERVER['PHP_SELF']);
 if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
@@ -11,8 +16,23 @@ $pesan = ''; $sukses = false;
 $target_dir = __DIR__ . '/../uploads/';
 if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); }
 
-// ---------- Proses Hapus Barang (POST + token) ----------
+// ---------- AMBIL & FILTRASI KATEGORI (Hanya yang berawalan "Alat") ----------
+$q_kat_all = q("SELECT * FROM kategori ORDER BY id_kategori ASC");
+$daftar_kategori = [];
+while ($k = $q_kat_all->fetch_assoc()) {
+    $nama_kat = trim($k['nama_kategori']);
+    // Memeriksa apakah nama kategori diawali dengan kata "Alat" (case-insensitive)
+    if (stripos($nama_kat, 'alat') === 0) {
+        $daftar_kategori[(int)$k['id_kategori']] = $nama_kat;
+    }
+}
+
+// ---------- Proses Hapus Barang (Khusus Admin) ----------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['aksi'] ?? '') === 'hapus') {
+    if (!$can_edit) {
+        $_SESSION['flash_inv'] = ['Akses ditolak. Petugas hanya dapat melihat data inventaris.', 'error'];
+        go($self);
+    }
     $id_hapus = (int)($_POST['id_barang'] ?? 0);
 
     if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
@@ -24,27 +44,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['aksi'] ?? '') === 'hapus')
         if (!$data) {
             $_SESSION['flash_inv'] = ['Barang tidak ditemukan atau sudah dihapus.', 'error'];
         } elseif (q("DELETE FROM inventaris WHERE id_barang = ?", 'i', $id_hapus)) {
-            // Foto baru dihapus SETELAH data berhasil terhapus
             if (!empty($data['foto']) && is_file($target_dir . $data['foto'])) { unlink($target_dir . $data['foto']); }
             logact('Menghapus sarpras ' . $data['nama_barang']);
             $_SESSION['flash_inv'] = ['Barang "' . $data['nama_barang'] . '" berhasil dihapus.', 'success'];
         } else {
-            $_SESSION['flash_inv'] = ['Barang "' . $data['nama_barang'] . '" tidak bisa dihapus karena sudah tercatat di riwayat peminjaman. Ubah stoknya menjadi 0 atau kondisinya menjadi Rusak sebagai gantinya.', 'error'];
+            $_SESSION['flash_inv'] = ['Barang "' . $data['nama_barang'] . '" tidak bisa dihapus karena sudah tercatat di riwayat peminjaman.', 'error'];
         }
     }
     go($self);
 }
 
-// ---------- Proses Tambah & Edit Barang ----------
+// ---------- Proses Tambah & Edit Barang (Khusus Admin) ----------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['aksi'] ?? '', ['tambah', 'edit'], true)) {
-    $aksi          = $_POST['aksi'];
-    $nama_barang   = trim($_POST['nama_barang'] ?? '');
-    $nama_kategori = trim($_POST['kategori_teks'] ?? 'Elektronika');
+    if (!$can_edit) {
+        $_SESSION['flash_inv'] = ['Akses ditolak. Petugas hanya dapat melihat data inventaris.', 'error'];
+        go($self);
+    }
+    $aksi        = $_POST['aksi'];
+    $nama_barang = trim($_POST['nama_barang'] ?? '');
+    $id_kategori = (int)($_POST['id_kategori'] ?? 0);
 
-    // Konversi kategori teks ke id_kategori sesuai kebutuhan database
-    $id_kategori = 1;
-    if ($nama_kategori === 'Perabot') { $id_kategori = 2; }
-    elseif ($nama_kategori === 'Lainnya') { $id_kategori = 3; }
+    // Validasi tambahan: pastikan kategori yang dipilih memang ada di dalam array yang terfiltrasi
+    if (!array_key_exists($id_kategori, $daftar_kategori)) {
+        $_SESSION['flash_inv'] = ['Kategori yang dipilih tidak valid atau bukan kategori alat.', 'error'];
+        go($self);
+    }
 
     $kode_inventaris = trim($_POST['kode_inventaris'] ?? '') ?: 'INV-' . time();
     $stok            = (int)($_POST['stok'] ?? 0);
@@ -64,15 +88,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['aksi'] ?? '', ['ta
     }
 
     if ($aksi === 'tambah') {
-        if ($nama_barang !== '' && $stok >= 0) {
+        if ($nama_barang !== '' && $stok >= 0 && $id_kategori > 0) {
             $ok = q("INSERT INTO inventaris (id_kategori, nama_barang, kode_inventaris, stok, kondisi, foto) VALUES (?, ?, ?, ?, ?, ?)", 'ississ', $id_kategori, $nama_barang, $kode_inventaris, $stok, $kondisi, $foto_nama);
             if ($ok) { $sukses = true; $pesan = "Barang inventaris berhasil ditambahkan!"; logact('Menambah sarpras ' . $nama_barang); }
             else { $pesan = "Gagal menyimpan. Kode inventaris mungkin sudah dipakai."; }
         } else {
-            $pesan = "Nama barang dan stok tidak boleh kosong.";
+            $pesan = "Nama barang, kategori, dan stok wajib diisi.";
         }
     } elseif ($aksi === 'edit' && $id_barang > 0) {
-        if ($nama_barang !== '') {
+        if ($nama_barang !== '' && $id_kategori > 0) {
             if ($foto_nama !== '') {
                 $q_old = q("SELECT foto FROM inventaris WHERE id_barang = ?", 'i', $id_barang);
                 $old_data = $q_old ? $q_old->fetch_assoc() : null;
@@ -84,12 +108,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['aksi'] ?? '', ['ta
             if ($ok) { $sukses = true; $pesan = "Data inventaris berhasil diperbarui!"; logact('Mengubah sarpras ' . $nama_barang); }
             else { $pesan = "Gagal memperbarui. Kode inventaris mungkin sudah dipakai."; }
         } else {
-            $pesan = "Nama barang wajib diisi.";
+            $pesan = "Nama barang dan kategori wajib diisi.";
         }
     }
 }
 
-// Pesan sekali tampil (hasil hapus)
 $flash_inv = $_SESSION['flash_inv'] ?? null;
 unset($_SESSION['flash_inv']);
 
@@ -121,7 +144,7 @@ $q_inventaris = !empty($params) ? q($sql, $types, ...$params) : q($sql);
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kelola Inventaris - Sarpras SMK Negeri 3 Kendal</title>
+<title><?= $can_edit ? 'Kelola Inventaris' : 'Data Inventaris' ?> - Sarpras SMK Negeri 3 Kendal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -143,8 +166,10 @@ body{font-family:var(--sans);color:var(--ink);min-height:100vh;display:flex;over
 
 .top-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;background:var(--ivory);padding:20px 24px;border-radius:20px;border:1px solid var(--line);box-shadow:0 10px 25px -15px rgba(15,95,88,.2)}
 .top-bar h1{font-family:var(--serif);font-size:26px;font-weight:700}
+.mode-tag{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;font-size:11.5px;font-weight:700;background:rgba(255,152,0,.18);color:#b36b00}
 
 .content-grid{display:grid;grid-template-columns:340px 1fr;gap:24px}
+.content-grid.single{grid-template-columns:1fr}
 .card{background:var(--ivory);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:0 12px 25px -15px rgba(15,95,88,.15)}
 .card h3{font-family:var(--serif);font-size:20px;font-weight:700;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--line)}
 
@@ -186,11 +211,12 @@ th{font-weight:700;color:var(--teal);text-transform:uppercase;font-size:10.5px;b
 .alert{padding:12px;border-radius:10px;margin-bottom:16px;font-size:12.5px;font-weight:600}
 .alert.success{background:rgba(25,135,84,.15);color:#198754}
 .alert.error{background:rgba(220,53,69,.15);color:#dc3545}
+.alert.info{background:rgba(13,110,253,.12);color:#0b5ed7}
 .footer{margin-top:30px;text-align:center;font-size:11px;color:var(--muted)}
 @media(max-width:1024px){.content-grid{grid-template-columns:1fr}.main-content{margin-left:72px;padding:16px}}
 </style>
+<?php if ($can_edit): ?>
 <script>
-var KAT = {1: 'Elektronika', 2: 'Perabot', 3: 'Lainnya'};
 function bukaModalEdit(btn) {
     var d = JSON.parse(btn.getAttribute('data-b'));
     document.getElementById('edit_id_barang').value = d.id;
@@ -198,26 +224,36 @@ function bukaModalEdit(btn) {
     document.getElementById('edit_kode_inventaris').value = d.kode;
     document.getElementById('edit_stok').value = d.stok;
     document.getElementById('edit_kondisi').value = d.kondisi;
-    document.getElementById('edit_id_kategori').value = KAT[d.kat] || 'Elektronika';
+    document.getElementById('edit_id_kategori').value = d.kat;
     document.getElementById('modalEdit').classList.add('active');
 }
 function tutupModalEdit() {
     document.getElementById('modalEdit').classList.remove('active');
 }
 </script>
+<?php endif; ?>
 </head>
 <body>
-<?php include __DIR__ . '/header.php'; ?>
+<?php include __DIR__ . '/../petugas/header.php'; ?>
 <main class="main-content">
  <div class="top-bar">
   <div>
-   <h1>Kelola Inventaris Alat & Barang</h1>
-   <p style="font-size:12.5px;color:var(--muted)">Tambah, perbarui, dan pantau ketersediaan stok inventaris sekolah.</p>
+   <h1><?= $can_edit ? 'Kelola Inventaris Alat & Barang' : 'Data Inventaris Alat & Barang' ?></h1>
+   <p style="font-size:12.5px;color:var(--muted)">Pantau ketersediaan stok inventaris sekolah.</p>
   </div>
+  <?php if (!$can_edit): ?><span class="mode-tag"><i class="fa-solid fa-eye"></i> Mode lihat saja</span><?php endif; ?>
  </div>
 
- <div class="content-grid">
-  <!-- Form Tambah -->
+ <?php if ($flash_inv): ?>
+  <div class="alert <?= e($flash_inv[1]) ?>" role="alert"><?= e($flash_inv[0]) ?></div>
+ <?php endif; ?>
+ <?php if (!$can_edit): ?>
+  <div class="alert info"><i class="fa-solid fa-circle-info"></i> Petugas hanya dapat melihat data inventaris. Tambah, ubah, dan hapus barang hanya bisa dilakukan oleh Administrator.</div>
+ <?php endif; ?>
+
+ <div class="content-grid <?= $can_edit ? '' : 'single' ?>">
+  <?php if ($can_edit): ?>
+  <!-- Form Tambah (khusus admin) -->
   <div class="card">
    <h3>Tambah Barang Baru</h3>
    <?php if ($pesan !== '' && ($_POST['aksi'] ?? '') === 'tambah'): ?>
@@ -235,11 +271,12 @@ function tutupModalEdit() {
      <input type="text" name="kode_inventaris" class="form-control" placeholder="Contoh: INV-001" required>
     </div>
     <div class="form-group">
-     <label>Kategori Barang</label>
-     <select name="kategori_teks" class="form-control">
-      <option value="Elektronika">1 - Elektronika</option>
-      <option value="Perabot">2 - Perabot</option>
-      <option value="Lainnya">3 - Lainnya</option>
+     <label>Kategori Alat</label>
+     <select name="id_kategori" class="form-control" required>
+      <option value="">-- Pilih Kategori Alat --</option>
+      <?php foreach ($daftar_kategori as $kid => $knama): ?>
+       <option value="<?= $kid ?>"><?= e($knama) ?></option>
+      <?php endforeach; ?>
      </select>
     </div>
     <div class="form-group">
@@ -261,6 +298,7 @@ function tutupModalEdit() {
     <button type="submit" class="btn-submit"><i class="fa-solid fa-plus"></i> Simpan Barang</button>
    </form>
   </div>
+  <?php endif; ?>
 
   <!-- Tabel & Filter -->
   <div class="card">
@@ -268,29 +306,26 @@ function tutupModalEdit() {
    <?php if ($pesan !== '' && ($_POST['aksi'] ?? '') === 'edit'): ?>
     <div class="alert <?= $sukses ? 'success' : 'error' ?>"><?= e($pesan) ?></div>
    <?php endif; ?>
-   <?php if ($flash_inv): ?>
-    <div class="alert <?= e($flash_inv[1]) ?>" role="alert"><?= e($flash_inv[0]) ?></div>
-   <?php endif; ?>
 
    <form method="GET" class="filter-bar">
     <input type="text" name="cari" placeholder="Cari nama atau kode barang..." value="<?= e($cari) ?>">
     <?php if ($kat > 0): ?><input type="hidden" name="id_kategori" value="<?= $kat ?>"><?php endif; ?>
     <button type="submit" class="btn-filter"><i class="fa-solid fa-magnifying-glass"></i></button>
     <a href="<?= e($self) ?>" class="btn-shortcut <?= $kat === 0 ? 'active' : '' ?>">Semua</a>
-    <a href="<?= e($self) ?>?id_kategori=1" class="btn-shortcut <?= $kat === 1 ? 'active' : '' ?>">1-Elektronika</a>
-    <a href="<?= e($self) ?>?id_kategori=2" class="btn-shortcut <?= $kat === 2 ? 'active' : '' ?>">2-Perabot</a>
-    <a href="<?= e($self) ?>?id_kategori=3" class="btn-shortcut <?= $kat === 3 ? 'active' : '' ?>">3-Lainnya</a>
+    <?php foreach ($daftar_kategori as $kid => $knama): ?>
+     <a href="<?= e($self) ?>?id_kategori=<?= $kid ?>" class="btn-shortcut <?= $kat === $kid ? 'active' : '' ?>"><?= e($knama) ?></a>
+    <?php endforeach; ?>
    </form>
 
    <table>
     <thead>
      <tr>
       <th style="width:10%">Foto</th>
-      <th style="width:25%">Nama Barang</th>
+      <th style="width:<?= $can_edit ? '25' : '32' ?>%">Nama Barang</th>
       <th style="width:15%">Kategori</th>
       <th style="width:12%">Stok</th>
       <th style="width:18%">Kondisi</th>
-      <th style="width:20%">Aksi</th>
+      <?php if ($can_edit): ?><th style="width:20%">Aksi</th><?php endif; ?>
      </tr>
     </thead>
     <tbody>
@@ -299,21 +334,21 @@ function tutupModalEdit() {
              $kondisi_cls = strtolower($row['kondisi']) === 'baik' ? 'baik' : 'rusak';
              $path_foto = (!empty($row['foto']) && is_file(__DIR__ . '/../uploads/' . $row['foto'])) ? '../uploads/' . $row['foto'] : 'https://placehold.co/100x100?text=No+Img';
 
-             $lbl_kat = '1-Elektronika';
-             if ((int)$row['id_kategori'] === 2) { $lbl_kat = '2-Perabot'; }
-             elseif ((int)$row['id_kategori'] === 3) { $lbl_kat = '3-Lainnya'; }
+             $id_kat_row = (int)$row['id_kategori'];
+             $lbl_kat = $daftar_kategori[$id_kat_row] ?? '-';
 
              $data_edit = json_encode([
                  'id' => (int)$row['id_barang'], 'nama' => $row['nama_barang'], 'kode' => $row['kode_inventaris'],
-                 'stok' => (int)$row['stok'], 'kondisi' => $row['kondisi'], 'kat' => (int)$row['id_kategori'],
+                 'stok' => (int)$row['stok'], 'kondisi' => $row['kondisi'], 'kat' => $id_kat_row,
              ]);
          ?>
          <tr>
           <td><img src="<?= e($path_foto) ?>" alt="Foto" class="barang-img"></td>
           <td><b><?= e($row['nama_barang']) ?></b><br><span style="font-size:10.5px;color:var(--muted)"><?= e($row['kode_inventaris']) ?></span></td>
-          <td><span style="font-size:11px;color:var(--teal);font-weight:700"><?= $lbl_kat ?></span></td>
+          <td><span style="font-size:11px;color:var(--teal);font-weight:700"><?= e($lbl_kat) ?></span></td>
           <td><?= (int)$row['stok'] ?> Unit</td>
           <td><span class="badge <?= $kondisi_cls ?>"><?= e($row['kondisi']) ?></span></td>
+          <?php if ($can_edit): ?>
           <td>
            <div class="aksi-wrap">
             <button type="button" class="btn-action btn-edit" title="Edit" data-b="<?= e($data_edit) ?>" onclick="bukaModalEdit(this)"><i class="fa-solid fa-pen-to-square"></i></button>
@@ -325,11 +360,12 @@ function tutupModalEdit() {
             </form>
            </div>
           </td>
+          <?php endif; ?>
          </tr>
          <?php endwhile; ?>
      <?php else: ?>
          <tr>
-          <td colspan="6" style="text-align:center;padding:30px;color:var(--muted)">Belum ada data inventaris barang yang terdaftar.</td>
+          <td colspan="<?= $can_edit ? 6 : 5 ?>" style="text-align:center;padding:30px;color:var(--muted)">Belum ada data inventaris barang yang terdaftar.</td>
          </tr>
      <?php endif; ?>
     </tbody>
@@ -337,7 +373,8 @@ function tutupModalEdit() {
   </div>
  </div>
 
- <!-- Modal Edit -->
+ <?php if ($can_edit): ?>
+ <!-- Modal Edit (khusus admin) -->
  <div class="modal-overlay" id="modalEdit">
   <div class="modal-card">
    <div class="modal-header">
@@ -357,11 +394,12 @@ function tutupModalEdit() {
      <input type="text" name="kode_inventaris" id="edit_kode_inventaris" class="form-control" required>
     </div>
     <div class="form-group">
-     <label>Kategori Barang</label>
-     <select name="kategori_teks" id="edit_id_kategori" class="form-control">
-      <option value="Elektronika">1 - Elektronika</option>
-      <option value="Perabot">2 - Perabot</option>
-      <option value="Lainnya">3 - Lainnya</option>
+     <label>Kategori Alat</label>
+     <select name="id_kategori" id="edit_id_kategori" class="form-control" required>
+      <option value="">-- Pilih Kategori Alat --</option>
+      <?php foreach ($daftar_kategori as $kid => $knama): ?>
+       <option value="<?= $kid ?>"><?= e($knama) ?></option>
+      <?php endforeach; ?>
      </select>
     </div>
     <div class="form-group">
@@ -384,6 +422,7 @@ function tutupModalEdit() {
    </form>
   </div>
  </div>
+ <?php endif; ?>
 
  <div class="footer"><?= date('Y') ?> &bull; Sarpras SMK Negeri 3 Kendal</div>
 </main>
